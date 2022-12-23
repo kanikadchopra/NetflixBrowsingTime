@@ -1,0 +1,649 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Phase 1: Factor Screening
+First, we load in the data.
+```{r}
+full<- read.csv('2^3.csv')
+```
+
+
+```{r}
+head(full)
+```
+
+## Coding Units
+Then, we need to encode our values based on their high and low scores so that we have coded units.
+
+Next, we separate our factors for simplicity. 
+```{r}
+A <- factor(full$Prev.Length, levels = c(100, 120), labels = c("100", "120"))
+B <- factor(full$Match.Score, levels = c(80,100), labels = c("80", "100"))
+C <- factor(full$Tile.Size, levels = c(0.1, 0.3), labels = c("0.1", "0.3"))
+y <- full$Browse.Time
+```
+
+# Don't need this?
+A <- factor(full$Prev.Length, levels = c(1,-1), labels = c("120", "100"))
+B <- factor(full$Match.Score, levels = c(1,-1), labels = c("100", "80"))
+C <- factor(full$Tile.Size, levels = c(1,-1), labels = c("0.3", "0.1"))
+y <- full$Browse.Time
+
+
+## Fitting the Model
+```{r}
+model.full <- lm(y~(A+B+C)^8, data = full) 
+summary(model.full)
+```
+* Main effects of A and B are active as the p-value associated is less than 0.01 (1% threshold selected)
+* Main effect of C is not significant as the p-value associated is 0.124 
+* Interaction effect of A:B is significant as pvalue associated is below 0.01 
+* Interaction effect of A:C, B:C and A:B:C is not significant as these values are all greater than 0.01 
+
+* Significant factors are just A and B.
+
+## Main Effects
+```{r}
+library(gplots)
+```
+
+```{r}
+## Graphical Summaries of the data
+par(mfrow = c(1,2))
+plotmeans(y ~ A, main = "Main Effect Plot for \n Preview Length", 
+          xlab = "Preview Length (sec)", ylab = "Mean Browsing Time", pch = 16)
+
+plotmeans(y ~ B, main = "Main Effect Plot for \n Match Score", 
+          xlab = "Match Score (%)", ylab = "Mean Browsing Time", pch = 16)
+```
+Lower preview length results in lower browsing time 
+Lower match score results in lower browsing time (this makes zero sense) 
+
+## Interaction Effects
+```{r} 
+interaction.plot(A, B, y,
+                 main = "Interaction Plot for Factors A and B", 
+                 ylab = "Match Score (B)", xlab = "Preview Length (A)")
+```
+
+We can see that since these lines are not parallel, we have that the interaction is significant. The optimal combination that minimizes average browsing time is a preview length of 100 and 80% match score.
+
+Now, since factor C is not significant, we want to fix this value for the remainder of our experiments. The difference between high vs. low does not significantly affect the average browsing time; hence, we go with the default value of 0.2. 
+
+
+# Phase 2: Steepest Descent
+
+For this section, we know that factors A and B are our significant ones; hence, we disregard looking at factor C. 
+
+We need to add in the central condition as well. 
+```{r}
+convert.C.to.N <- function(x,UH,UL){
+  U <- x*((UH-UL)/2) + (UH+UL)/2
+  return(U)
+}
+```
+
+```{r}
+# Preview Length
+convert.C.to.N(0, 120, 100)
+
+# Match Score
+convert.C.to.N(0, 100, 80)
+
+```
+
+Our centre condition for preview length is 110 and for match score it is 90. Next, we get more data for these new conditions.
+
+
+Functions for gradient descent
+```{r}
+# Function to create blues
+blue_palette <- colorRampPalette(c(rgb(247,251,255,maxColorValue = 255), rgb(8,48,107,maxColorValue = 255)))
+
+# Function for converting from natural units to coded units
+convert.N.to.C <- function(U,UH,UL){
+  x <- (U - (UH+UL)/2) / ((UH-UL)/2)
+  return(x)
+}
+
+# Function for converting from coded units to natural units
+convert.C.to.N <- function(x,UH,UL){
+  U <- x*((UH-UL)/2) + (UH+UL)/2
+  return(U)
+}
+
+# Function to create x and y grids for contour plots 
+mesh <- function(x, y) { 
+  Nx <- length(x)
+  Ny <- length(y)
+  list(
+    x = matrix(nrow = Nx, ncol = Ny, data = x),
+    y = matrix(nrow = Nx, ncol = Ny, data = y, byrow = TRUE)
+  )
+}
+```
+
+```{r}
+cp <- read.csv("2^2+cp.csv", header = TRUE)
+
+head(cp)
+```
+
+The factors and their low/center/high levels are as follows:
+* Preview Length: 100 vs. 110 vs. 120
+* Match Score:   80 vs. 90 vs. 100
+
+## The number of units in each of the 5 conditions is:
+```{r}
+table(cp$Prev.Length, cp$Match.Score)
+```
+
+```{r}
+ph1 <- data.frame(y = cp$Browse.Time,
+                  x1 = convert.N.to.C(U = cp$Prev.Length, UH = 120, UL = 100),
+                  x2 = convert.N.to.C(U = cp$Match.Score, UH = 100, UL = 80))
+```
+
+
+## Fit the first order model to determine the direction of the path of 
+## steepest descent
+```{r}
+m.fo <- lm(y~x1+x2, data = ph1)
+beta0 <- coef(m.fo)[1]
+beta1 <- coef(m.fo)[2]
+beta2 <- coef(m.fo)[3]
+```
+
+```{r}
+grd <- mesh(x = seq(convert.N.to.C(U = 30, UH = 120, UL = 100), 
+                    convert.N.to.C(U = 150, UH = 120, UL = 100), 
+                    length.out = 100), 
+            y = seq(convert.N.to.C(U = 60, UH = 100, UL = 80), 
+                    convert.N.to.C(U = 100, UH = 100, UL = 80), 
+                    length.out = 100))
+x1 <- grd$x
+x2 <- grd$y
+eta.fo <- beta0 + beta1*x1 + beta2*x2
+# 2D contour plot
+contour(x = seq(convert.N.to.C(U = 30, UH = 120, UL = 100), 
+                convert.N.to.C(U = 150, UH = 120, UL = 100), 
+                length.out = 100),
+        y = seq(convert.N.to.C(U = 60, UH = 100, UL = 80), 
+                convert.N.to.C(U = 100, UH = 100, UL = 80), 
+                length.out = 100), 
+        z = eta.fo, xlab = "x1 (Preview Length)", ylab = "x2 (Match Score)",
+        nlevels = 15, col = blue_palette(15), labcex = 0.9, asp=1)
+abline(a = 0, b = beta2/beta1, lty = 2)
+points(x = 0, y = 0, col = "red", pch = 16)
+
+# The gradient vector
+g <- matrix(c(beta1, beta2), nrow = 1)
+
+PL.step <- convert.N.to.C(U = 110 + 5, UH = 120, UL = 100)
+lamda <- PL.step/abs(beta1)
+
+## Step 0: The center point we've already observed
+x.old <- matrix(0, nrow=1, ncol=2)
+text(x = 0, y = 0+0.25, labels = "0")
+step0 <- data.frame(Prev.Length = convert.C.to.N(x = 0, UH = 120, UL = 100), 
+                 Match.Score = convert.C.to.N(x = 0, UH = 100, UL = 80))
+
+## Step 1: 
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "1")
+step1 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100),
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 2: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "2")
+step2 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100),
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 3: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "3")
+step3 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100),
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 4: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "4")
+step4 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100),
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 5: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "5")
+step5 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100),
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 6: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "6")
+step6 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100),
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 7:
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "7")
+step7 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100),
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+
+## Step 8
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "8")
+step8 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 120, UL = 100),
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 100, UL = 80))
+```
+
+We will want to go downwards towards the bottom left corner of this graph. We will take steps of size 5 seconds in preview length. In coded units this is
+
+## The following is a list of the conditions along the path of steepest descent
+```{r}
+pstd.cond <- data.frame(Step = 0:7, rbind(step0, step1, step2, step3, step4, step5, step6, step7))
+pstd.cond$Match.Score <- round(pstd.cond$Match.Score)
+pstd.cond
+```
+
+Now. we want to get our data for each of these different step sizes. We have the data for step 0 so we create a vector to store our mean browsing time at each step.
+```{r}
+step00 <- cp[cp$Prev.Length==110,]
+step01 <- read.csv('step1.csv')
+step02 <- read.csv('step2.csv')
+step03 <- read.csv('step3.csv')
+step04 <- read.csv('step4.csv')
+step05 <- read.csv('step5.csv')
+step06 <- read.csv('step6.csv')
+```
+
+```{r}
+steps <- seq(0:6)
+prev <- c(110, 105, 100, 95, 90, 85, 80)
+score <- c(90, 85, 80, 75, 69, 64, 59)
+means <- c(mean(step00$Browse.Time), mean(step01$Browse.Time),
+           mean(step02$Browse.Time), mean(step03$Browse.Time),
+           mean(step04$Browse.Time), mean(step05$Browse.Time),
+           mean(step06$Browse.Time))
+```
+
+```{r}
+data.frame(steps-1, prev, score, means)
+```
+
+
+```{r}
+plot(x = 0:6, y = means,
+     type = "l", xlab = "Step Number", ylab = "Average Browsing Time")
+points(x = 0:6, y = means,
+       col = "red", pch = 16)
+```
+
+Clearly average browsing time was minimized at Step 5 which was when our preview length was 85 seconds and our match score was 64%. 
+
+We should follow this up with 2^2 factorial conditions to ensure we're close to optimum. We will re-center our coded scale in this new region as follows:
+* Preview Length: 80 vs. 85 vs. 90
+* Match Score: 59 vs. 64 vs. 69
+
+## Load this data and check whether the pure quadratic effect is significant
+```{r}
+ph2_data <- read.csv('2^2+cp_second_time.csv', header=TRUE)
+ph2_data_clean <- ph2_data[ph2_data$Prev.Length != 85,]
+addition <- read.csv('addition.csv', header=TRUE)
+
+ph2 <- rbind(ph2_data_clean, addition, step05)
+```
+
+```{r}
+cp2 <- data.frame(y = ph2$Browse.Time,
+                  x1 = convert.N.to.C(U = ph2$Prev.Length, UH = 90, UL = 80),
+                  x2 = convert.N.to.C(U = ph2$Match.Score, UH = 69, UL = 59))
+cp2$xPQ <- (cp2$x1^2 + cp2$x2^2)/2
+```
+
+Check the average browsing time in each condition:
+```{r}
+aggregate(cp2$y, by = list(x1 = cp2$x1, x2 = cp2$x2), FUN = mean)
+```
+
+The difference in average browsing time in factorial conditions vs. the center 
+point condition
+```{r}
+mean(cp2$y[cp2$xPQ != 0]) - mean(cp2$y[cp2$xPQ == 0])
+```
+
+Finally, we check to see if that is significant. 
+```{r}
+m <- lm(y~x1+x2+x1*x2+xPQ, data = cp2)
+summary(m)
+```
+
+We have curvature here. But we want to make sure that there is not further fine-tuning that we could do with gradient descent. Hence, we re-calculate the gradient descent again to see if we can get closer to the vicinity of our optimum.
+
+
+## Check gradient descent again at best phase 
+
+```{r}
+ph2.grad <- data.frame(y = ph2$Browse.Time,
+                  x1 = convert.N.to.C(U = ph2$Prev.Length, UH = 90, UL = 80),
+                  x2 = convert.N.to.C(U = ph2$Match.Score, UH = 69, UL = 59))
+```
+
+
+## Fit the first order model to determine the direction of the path of 
+## steepest descent
+```{r}
+m.fo2 <- lm(y~x1+x2, data = ph2.grad)
+beta0 <- coef(m.fo2)[1]
+beta1 <- coef(m.fo2)[2]
+beta2 <- coef(m.fo2)[3]
+```
+
+```{r}
+grd <- mesh(x = seq(convert.N.to.C(U = 30, UH = 90, UL = 80), 
+                    convert.N.to.C(U = 100, UH = 90, UL = 80), 
+                    length.out = 100), 
+            y = seq(convert.N.to.C(U = 40, UH = 69, UL = 59), 
+                    convert.N.to.C(U = 90, UH = 69, UL = 59), 
+                    length.out = 100))
+x1 <- grd$x
+x2 <- grd$y
+eta.fo <- beta0 + beta1*x1 + beta2*x2
+# 2D contour plot
+contour(x = seq(convert.N.to.C(U = 30, UH = 90, UL = 80), 
+                convert.N.to.C(U = 100, UH = 90, UL = 80), 
+                length.out = 100),
+        y = seq(convert.N.to.C(U = 40, UH = 69, UL = 59), 
+                convert.N.to.C(U = 90, UH = 69, UL = 59), 
+                length.out = 100), 
+        z = eta.fo, xlab = "x1 (Preview Length)", ylab = "x2 (Match Score)",
+        nlevels = 15, col = blue_palette(15), labcex = 0.9, asp=1)
+abline(a = 0, b = beta2/beta1, lty = 2)
+points(x = 0, y = 0, col = "red", pch = 16)
+
+# The gradient vector
+g <- matrix(c(beta1, beta2), nrow = 1)
+
+PL.step <- convert.N.to.C(U = 85 + 5, UH = 90, UL = 80)
+lamda <- PL.step/abs(beta1)
+
+## Step 0: The center point we've already observed
+x.old <- matrix(0, nrow=1, ncol=2)
+text(x = 0, y = 0+0.25, labels = "0")
+step0 <- data.frame(Prev.Length = convert.C.to.N(x = 0, UH = 90, UL = 80), 
+                 Match.Score = convert.C.to.N(x = 0, UH = 69, UL = 59))
+
+## Step 1: 
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "1")
+step1 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 90, UL = 80),
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 69, UL = 59))
+
+## Step 2: 
+x.old <- x.new
+x.new <- x.old - lamda*g
+points(x = x.new[1,1], y = x.new[1,2], col = "red", pch = 16)
+text(x = x.new[1,1], y = x.new[1,2]+0.25, labels = "2")
+step2 <- data.frame(Prev.Length = convert.C.to.N(x = x.new[1,1], UH = 90, UL = 80),
+                    Match.Score = convert.C.to.N(x = x.new[1,2], UH = 69, UL = 59))
+
+```
+
+List of steepest descent part 2
+
+```{r}
+pstd.cond2 <- data.frame(Step = 0:2, rbind(step0, step1, step2))
+pstd.cond2$Match.Score <- round(pstd.cond2$Match.Score)
+pstd.cond2
+```
+
+We collect data on these conditions to see if we can get closer to our optimum. 
+
+```{r}
+mean(ph2[ph2$Prev.Length == 85,]$Browse.Time)
+```
+
+Read in data for first two steps
+
+```{r}
+pt2 <- read.csv('step12_pt2.csv')
+step12 <- pt2[pt2$Prev.Length == 80,]
+step22 <- pt2[pt2$Prev.Length == 75,]
+```
+
+Calculate the averages for first two steps to determine if we should use more steps.
+
+```{r}
+steps <- seq(0:2)
+prev <- c(85, 80, 75)
+score <- c(64, 73, 82)
+means <- c(mean(step05$Browse.Time),
+           mean(step12$Browse.Time), mean(step22$Browse.Time))
+```
+
+```{r}
+data.frame(steps-1, prev, score, means)
+```
+
+
+```{r}
+plot(x = 0:2, y = means,
+     type = "l", xlab = "Step Number", ylab = "Average Browsing Time")
+points(x = 0:2, y = means,
+       col = "red", pch = 16)
+```
+
+From this, we can see that after one step we have reached our optimal point with an average browsing time of 10.38 minutes with 80 seconds as the preview length and 73% as the match score. 
+
+Next, we do a final check for curvature. We should follow this up with 2^2 factorial conditions to ensure we're close to optimum. We will re-center our coded scale in this new region as follows:
+* Preview Length: 75 vs. 80 vs. 85
+* Match Score: 64 vs. 73 vs. 82
+
+## Load this data and check whether the pure quadratic effect is significant
+```{r}
+ph3_data <- read.csv('2^2+cp_third_time.csv', header=TRUE)
+
+# 85 preview length and 64 match score data 
+row5 <- ph2[ph2$Prev.Length == 85, ]
+
+ph3 <- rbind(ph3_data, row5)
+```
+
+```{r}
+cp3 <- data.frame(y = ph3$Browse.Time,
+                  x1 = convert.N.to.C(U = ph3$Prev.Length, UH = 85, UL = 75),
+                  x2 = convert.N.to.C(U = ph3$Match.Score, UH = 82, UL = 64))
+cp3$xPQ <- (cp3$x1^2 + cp3$x2^2)/2
+```
+
+Check the average browsing time in each condition:
+```{r}
+aggregate(cp3$y, by = list(x1 = cp3$x1, x2 = cp3$x2), FUN = mean)
+```
+
+The difference in average browsing time in factorial conditions vs. the center 
+point condition
+```{r}
+mean(cp3$y[cp3$xPQ != 0]) - mean(cp3$y[cp3$xPQ == 0])
+```
+
+Finally, we check to see if that is significant. 
+```{r}
+m2 <- lm(y~x1+x2+x1*x2+xPQ, data = cp3)
+summary(m2)
+```
+
+Here we can see that the value for xPQ is significant. Hence, we have achieved curvature and we are closer to the vicinity of our optimum. Now, we can move onto Phase 3 with our region of the optimum being around 80 seconds and the score being around 73%. 
+
+The p-value for xPQ is 3.912457e-31.
+
+# Phase 3: Response Optimization
+
+Since our region of the optimum is not near a corner of the region of operability for any of the factors, we do not use a=1. 
+
+Hence, we use $a=\sqrt{2}$. This will help us to ensure that the estimate of the response surface at each condition is equally precise so we have a rotable design. 
+
+Hence, a follow-up two-factor central composite design (CCD) needs to be run in order to fit a second-order response surface model.
+
+```{r}
+a = sqrt(2)
+a = 1.43
+```
+
+```{r}
+# Preview length
+p1 <- convert.C.to.N(a, 85, 75)
+p2 <- convert.C.to.N(-a, 85, 75)
+
+c(p1,p2)
+```
+```{r}
+# Match Score 
+m1 <- convert.C.to.N(a, 82, 64)
+m2 <- convert.C.to.N(-a, 82, 64)
+
+c(m1, m2)
+```
+
+```{r}
+prev <- c(75, 85, 75, 85, 90, 70, 80, 80, 80)
+score <- c(64, 64, 82, 82, 73, 73, 86, 60, 73)
+x1 <- c(-1, 1, -1, 1, -a, a, 0, 0, 0)
+x2 <- c(-1, -1, 1, 1, 0, 0, -a, a, 0)
+
+data.frame(prev, x1, score, x2)
+```
+
+Our axial conditions are $\sqrt{2}$ but we have the corresponding preview length and matching scores of (90 seconds, 70 seconds) and (86 %, 60%). Note that for this, we rounded our percentages to the closest integers and the preview lengths to the closest 5 second increment. 
+
+Now, we need n=100 users into each of these conditions. Note that we already have the data for (75, 64), (75, 82), (85, 64), (85, 82), (80, 73). 
+
+Hence, we need to collect data for the following three conditions: (90, 73), (70, 73), (80, 86), (80, 60). 
+
+```{r}
+prev75 <- ph3[ph3$Prev.Length == 75,]
+prev85 <- ph3[ph3$Prev.Length == 85,]
+prev80 <- ph3[ph3$Prev.Length == 80,]
+
+new_data <- read.csv('new_data.csv')
+
+ph4 <- rbind(prev75, prev80, prev85, new_data)
+```
+
+Calculate the average browsing time in each condition
+```{r}
+pi_hat <- aggregate(x = ph4$Browse.Time, by = list(condition.num = kronecker(1:9, rep(1, 100))), FUN = mean)
+data.frame(Condition.Num = pi_hat$condition.num, 
+           Prev.Length = condition$x1, 
+           Match.Score = condition$x2,
+           Browse.Time = pi_hat$x)
+```
+
+We then fit the full 2nd-order response surface
+```{r}
+y <- ph4$Browse.Time
+x1 <- convert.N.to.C(U=ph4$Prev.Length, UH=85, UL=75) # Should this be 87 and 73
+x2 <- convert.N.to.C(U=ph4$Match.Score, UH=82, UL=64) # Should this be 82 and 60
+model <- lm(y ~ x1 + x2 + x1*x2 + I(x1^2) + I(x2^2))
+summary(model)
+```
+
+```{r}
+## Let's visualize this surface:
+beta0 <- coef(model)[1]
+beta1 <- coef(model)[2]
+beta2 <- coef(model)[3]
+beta12 <- coef(model)[6]
+beta11 <- coef(model)[4]
+beta22 <- coef(model)[5]
+
+# Fix all of this
+grd <- mesh(x = seq(convert.N.to.C(U = 0, UH = 85, UL = 75), 
+                    convert.N.to.C(U = 100, UH = 85, UL = 75), 
+                    length.out = 100), 
+            y = seq(convert.N.to.C(U = 0, UH = 82, UL = 64), 
+                    convert.N.to.C(U = 100, UH = 82, UL = 64), 
+                    length.out = 100))
+x1 <- grd$x
+x2 <- grd$y
+eta.so <- beta0 + beta1*x1 + beta2*x2 + beta12*x1*x2 + beta11*x1^2 + beta22*x2^2
+pi.so <- eta.so
+```
+
+```{r}
+contour(x = seq(convert.N.to.C(U = 0, UH = 85, UL = 75), 
+                convert.N.to.C(U = 100, UH = 85, UL = 75), 
+                length.out = 100), 
+        y = seq(convert.N.to.C(U = 0, UH = 82, UL = 64), 
+                convert.N.to.C(U = 100, UH = 82, UL = 64), 
+                length.out = 100), 
+        z = pi.so, xlab = "x1", ylab = "x2",
+        nlevels = 20, col = blue_palette(20), labcex = 0.9)
+
+b <- matrix(c(beta1,beta2), ncol = 1)
+B <- matrix(c(beta11, 0.5*beta12, 0.5*beta12, beta22), nrow = 2, ncol = 2)
+x.s <- -0.5*solve(B) %*% b 
+points(x = x.s[1], y = x.s[2], col = "red", pch = 16)
+```
+
+Above, we have the maximum of this surface and the corresponding factor levels at which this is achieved in coded units.
+
+```{r}
+eta.s <- beta0 + 0.5*t(x.s) %*% b
+eta.s
+```
+
+```{r}
+# In natural units this optimum is located at
+convert.C.to.N(x = x.s[1,1], UH = 85, UL = 75)
+convert.C.to.N(x = x.s[2,1], UH = 82, UL = 64)
+```
+
+We have that our optimal location in natural units is 75.5936 seconds for preview length and 74.42077% for match score. Hence, we have 75 seconds for preview length and 74% for the match score. 
+
+This would be a feasible combination to have.
+
+Contour plot in natural units.
+```{r}
+# Remake the contour plot but in natural units
+contour(x = seq(0, 100, length.out = 100), 
+        y = seq(0, 10, length.out = 100), 
+        z = pi.so, xlab = "Preview Length (sec)", ylab = "Match Score (%)",
+        nlevels = 20, col = blue_palette(20), labcex = 0.9)
+
+points(x = convert.C.to.N(x = x.s[1,1], UH = 85, UL = 75),
+       y = convert.C.to.N(x = x.s[2,1], UH = 82, UL = 64),
+       col = "red", pch = 16)
+
+points(x = 50, y = 2, pch = 16, col = "green")
+```
+
+
+```{r}
+n.data <- data.frame(x1=x.s[1,1], x2=x.s[2,1])
+
+ci <- predict(model, newdata = n.data, type = "response", se.fit = TRUE)
+print(paste("Prediction: ", ci$fit, sep = ""))
+print(paste("95% Prediction interval: (", ci$fit-qnorm(0.975)*ci$se.fit, ",", ci$fit+qnorm(0.975)*ci$se.fit, ")", sep = ""))
+```
+
+Our prediction is 10.01 minutes and our confidence interval for the average browsing time is (9.85176785765559,10.158627329715). 
+
