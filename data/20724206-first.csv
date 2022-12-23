@@ -1,0 +1,9 @@
+Prev.Length,Match.Score,Tile.Size,Prev.Type
+100,80,0.1,TT
+120,80,0.1,TT
+100,100,0.1,TT
+120,100,0.1,TT
+100,80,0.3,TT
+120,80,0.3,TT
+100,100,0.3,TT
+120,100,0.3,TT
